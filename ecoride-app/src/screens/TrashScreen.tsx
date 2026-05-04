@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+import ConfettiCannon from 'react-native-confetti-cannon';
 import { useAppContext } from '../context/AppContext';
 
 interface TrashScreenProps {
@@ -22,287 +24,405 @@ interface TrashType {
   name: string;
   points: number;
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  selected: boolean;
+  color: string;
+  description: string;
 }
 
-export const TrashScreen: React.FC<TrashScreenProps> = ({ navigation }) => {
-  const { addPoints } = useAppContext();
-  const [selectedTrash, setSelectedTrash] = useState<string | null>(null);
-  const [isAnimating, setIsAnimating] = useState(false);
+const TRASH_TYPES: TrashType[] = [
+  {
+    id: 'plastic',
+    name: 'Plastik',
+    points: 10,
+    icon: 'bottle-soda',
+    color: '#2196F3',
+    description: 'Şişe, ambalaj',
+  },
+  {
+    id: 'glass',
+    name: 'Cam',
+    points: 15,
+    icon: 'glass-fragile',
+    color: '#9C27B0',
+    description: 'Şişe, kavanoz',
+  },
+  {
+    id: 'paper',
+    name: 'Kağıt',
+    points: 8,
+    icon: 'newspaper-variant',
+    color: '#FF9800',
+    description: 'Gazete, karton',
+  },
+  {
+    id: 'organic',
+    name: 'Organik',
+    points: 12,
+    icon: 'leaf',
+    color: '#4CAF50',
+    description: 'Yiyecek atığı',
+  },
+  {
+    id: 'metal',
+    name: 'Metal',
+    points: 20,
+    icon: 'silverware-fork-knife',
+    color: '#607D8B',
+    description: 'Teneke, kutu',
+  },
+  {
+    id: 'other',
+    name: 'Diğer',
+    points: 5,
+    icon: 'trash-can-outline',
+    color: '#795548',
+    description: 'Diğer atıklar',
+  },
+];
 
-  const [trashTypes, setTrashTypes] = useState<TrashType[]>([
-    { id: 'plastic', name: 'Plastik', points: 10, icon: 'bottle-wine', selected: false },
-    { id: 'glass', name: 'Cam', points: 15, icon: 'water-percent', selected: false },
-    { id: 'paper', name: 'Kağıt', points: 8, icon: 'newspaper', selected: false },
-    { id: 'other', name: 'Diğer', points: 5, icon: 'trash-can-outline', selected: false },
-  ]);
+export const TrashScreen: React.FC<TrashScreenProps> = () => {
+  const { addPoints, points } = useAppContext();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastEarned, setLastEarned] = useState<number | null>(null);
+  const confettiRef = useRef<any>(null);
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const pointsAnim = useRef(new Animated.Value(0)).current;
+  const pointsOpacity = useRef(new Animated.Value(0)).current;
 
-  const handleTrashSelect = (trashId: string) => {
-    setSelectedTrash(trashId);
-    setTrashTypes((prev) =>
-      prev.map((trash) => ({
-        ...trash,
-        selected: trash.id === trashId,
-      }))
-    );
+  const handleSelect = (id: string) => {
+    setSelectedId(id);
+    Haptics.selectionAsync();
+
+    Animated.sequence([
+      Animated.timing(scaleAnim, { toValue: 0.95, duration: 80, useNativeDriver: true }),
+      Animated.spring(scaleAnim, { toValue: 1, tension: 200, friction: 5, useNativeDriver: true }),
+    ]).start();
   };
 
   const handleEarnPoints = () => {
-    if (!selectedTrash) {
-      Alert.alert('Uyarı', 'Lütfen bir çöp türü seçiniz');
+    if (!selectedId) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert('Uyarı', 'Lütfen bir çöp türü seçin');
       return;
     }
 
-    const selected = trashTypes.find((t) => t.id === selectedTrash);
-    if (selected) {
-      setIsAnimating(true);
-      addPoints(selected.points, `Çöp atma (${selected.name})`);
+    const selected = TRASH_TYPES.find((t) => t.id === selectedId);
+    if (!selected) return;
 
-      Alert.alert('🎉 Başarılı!', `${selected.points} puan kazandınız!`, [
-        {
-          text: 'Tamam',
-          onPress: () => {
-            setIsAnimating(false);
-            setSelectedTrash(null);
-            setTrashTypes((prev) =>
-              prev.map((t) => ({
-                ...t,
-                selected: false,
-              }))
-            );
-          },
-        },
-      ]);
-    }
+    setIsLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+    setTimeout(() => {
+      addPoints(selected.points, `Çöp atma (${selected.name})`);
+      setLastEarned(selected.points);
+      setIsLoading(false);
+      setSelectedId(null);
+
+      // Konfeti
+      confettiRef.current?.start();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // +puan animasyonu
+      pointsAnim.setValue(0);
+      pointsOpacity.setValue(1);
+      Animated.parallel([
+        Animated.timing(pointsAnim, { toValue: -60, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pointsOpacity, { toValue: 0, duration: 1000, useNativeDriver: true }),
+      ]).start(() => setLastEarned(null));
+    }, 800);
   };
+
+  const selectedTrash = TRASH_TYPES.find((t) => t.id === selectedId);
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Çöp At & Puan Kazan</Text>
-          <Text style={styles.subtitle}>Çöp türünü seçerek puan kazanın</Text>
+          <Text style={styles.subtitle}>Çöp türünü seç, puan kazan</Text>
         </View>
 
-        {/* QR Camera Section */}
-        <View style={styles.qrSection}>
-          <View style={styles.qrCamera}>
-            {/* Top Left Corner */}
-            <View style={[styles.corner, styles.topLeft]} />
-            {/* Top Right Corner */}
-            <View style={[styles.corner, styles.topRight]} />
-            {/* Bottom Left Corner */}
-            <View style={[styles.corner, styles.bottomLeft]} />
-            {/* Bottom Right Corner */}
-            <View style={[styles.corner, styles.bottomRight]} />
+        {/* Puan göstergesi */}
+        <View style={styles.pointsRow}>
+          <LinearGradient
+            colors={['#1a9e6e', '#0d7a53']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.pointsBadge}
+          >
+            <MaterialCommunityIcons name="star-circle" size={20} color="#fff" />
+            <Text style={styles.pointsBadgeText}>{points} puan</Text>
+          </LinearGradient>
+        </View>
 
-            <MaterialCommunityIcons name="qrcode-scan" size={80} color="rgba(26, 158, 110, 0.3)" />
-            <Text style={styles.qrText}>QR Kodu Okutun</Text>
-            <Text style={styles.qrSubtext}>(Veya aşağıdan seçiniz)</Text>
+        {/* QR Section */}
+        <View style={styles.qrSection}>
+          <View style={styles.qrBox}>
+            <View style={[styles.corner, styles.tl]} />
+            <View style={[styles.corner, styles.tr]} />
+            <View style={[styles.corner, styles.bl]} />
+            <View style={[styles.corner, styles.br]} />
+            <MaterialCommunityIcons name="qrcode-scan" size={64} color="rgba(26,158,110,0.25)" />
+            <Text style={styles.qrTitle}>QR Kodu Tara</Text>
+            <Text style={styles.qrSub}>Çöp kutusundaki kodu okutun</Text>
           </View>
         </View>
 
-        {/* Trash Type Selection */}
-        <View style={styles.trashSelectionSection}>
-          <Text style={styles.sectionTitle}>Çöp Türünü Seç</Text>
-          <View style={styles.trashGrid}>
-            {trashTypes.map((trash) => (
+        {/* Ayırıcı */}
+        <View style={styles.orRow}>
+          <View style={styles.orLine} />
+          <Text style={styles.orText}>veya manuel seç</Text>
+          <View style={styles.orLine} />
+        </View>
+
+        {/* Çöp türleri grid */}
+        <View style={styles.grid}>
+          {TRASH_TYPES.map((trash) => {
+            const isSelected = selectedId === trash.id;
+            return (
               <TouchableOpacity
                 key={trash.id}
-                style={[styles.trashCard, trash.selected && styles.trashCardSelected]}
-                onPress={() => handleTrashSelect(trash.id)}
-                activeOpacity={0.7}
+                onPress={() => handleSelect(trash.id)}
+                activeOpacity={0.75}
+                style={styles.cardWrapper}
               >
-                <LinearGradient
-                  colors={
-                    trash.selected
-                      ? ['#1a9e6e', '#0d7a53']
-                      : ['#f5f5f5', '#efefef']
-                  }
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.trashCardGradient}
+                <Animated.View
+                  style={[
+                    styles.trashCard,
+                    isSelected && { borderColor: trash.color, borderWidth: 2 },
+                    isSelected && { transform: [{ scale: scaleAnim }] },
+                  ]}
                 >
-                  <MaterialCommunityIcons
-                    name={trash.icon}
-                    size={40}
-                    color={trash.selected ? '#fff' : '#1a9e6e'}
-                  />
-                  <Text style={[styles.trashName, trash.selected && styles.trashNameSelected]}>
-                    {trash.name}
-                  </Text>
-                  <Text style={[styles.trashPoints, trash.selected && styles.trashPointsSelected]}>
-                    +{trash.points}
-                  </Text>
-                </LinearGradient>
+                  {isSelected && (
+                    <LinearGradient
+                      colors={[trash.color + '22', trash.color + '08']}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  )}
+                  <View style={[styles.iconCircle, { backgroundColor: trash.color + '20' }]}>
+                    <MaterialCommunityIcons name={trash.icon} size={32} color={trash.color} />
+                  </View>
+                  <Text style={styles.trashName}>{trash.name}</Text>
+                  <Text style={styles.trashDesc}>{trash.description}</Text>
+                  <View style={[styles.pointsPill, { backgroundColor: isSelected ? trash.color : '#f0f0f0' }]}>
+                    <Text style={[styles.pointsPillText, { color: isSelected ? '#fff' : '#666' }]}>
+                      +{trash.points} puan
+                    </Text>
+                  </View>
+                  {isSelected && (
+                    <View style={styles.checkBadge}>
+                      <MaterialCommunityIcons name="check-circle" size={18} color={trash.color} />
+                    </View>
+                  )}
+                </Animated.View>
               </TouchableOpacity>
-            ))}
-          </View>
+            );
+          })}
         </View>
 
-        {/* Earn Button */}
-        <LinearGradient
-          colors={['#1a9e6e', '#0d7a53']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.earnButtonGradient}
-        >
-          <TouchableOpacity
-            style={styles.earnButton}
-            onPress={handleEarnPoints}
-            disabled={isAnimating}
-            activeOpacity={0.8}
-          >
-            <MaterialCommunityIcons name="star-circle" size={24} color="#fff" />
-            <Text style={styles.earnButtonText}>
-              {isAnimating ? 'Puan Ekleniyor...' : 'Puan Kazan'}
+        {/* Seçili bilgi */}
+        {selectedTrash && (
+          <View style={[styles.selectedInfo, { borderLeftColor: selectedTrash.color }]}>
+            <MaterialCommunityIcons name={selectedTrash.icon} size={20} color={selectedTrash.color} />
+            <Text style={styles.selectedInfoText}>
+              <Text style={{ fontWeight: '700' }}>{selectedTrash.name}</Text> seçildi —{' '}
+              {selectedTrash.points} puan kazanacaksın!
             </Text>
-          </TouchableOpacity>
-        </LinearGradient>
+          </View>
+        )}
+
+        {/* Puan Kazan butonu */}
+        <TouchableOpacity
+          onPress={handleEarnPoints}
+          disabled={isLoading}
+          activeOpacity={0.85}
+          style={styles.earnWrapper}
+        >
+          <LinearGradient
+            colors={isLoading ? ['#7dcbad', '#5bb898'] : ['#1a9e6e', '#0d7a53']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.earnButton}
+          >
+            {isLoading ? (
+              <Text style={styles.earnButtonText}>Puan ekleniyor...</Text>
+            ) : (
+              <>
+                <MaterialCommunityIcons name="recycle" size={22} color="#fff" />
+                <Text style={styles.earnButtonText}>
+                  {selectedTrash ? `+${selectedTrash.points} Puan Kazan` : 'Puan Kazan'}
+                </Text>
+              </>
+            )}
+          </LinearGradient>
+        </TouchableOpacity>
 
         {/* Info */}
-        <View style={styles.infoSection}>
-          <MaterialCommunityIcons name="leaf" size={20} color="#1a9e6e" />
+        <View style={styles.infoBanner}>
+          <MaterialCommunityIcons name="leaf" size={16} color="#1a9e6e" />
           <Text style={styles.infoText}>
-            Çöpü doğru yerlere atarak çevreyi koruyun ve puan kazanın!
+            Doğru atık ayrıştırması çevreye büyük katkı sağlar 🌍
           </Text>
         </View>
+
       </ScrollView>
+
+      {/* +puan animasyonu */}
+      {lastEarned && (
+        <Animated.View
+          style={[
+            styles.floatingPoints,
+            {
+              transform: [{ translateY: pointsAnim }],
+              opacity: pointsOpacity,
+            },
+          ]}
+          pointerEvents="none"
+        >
+          <Text style={styles.floatingPointsText}>+{lastEarned} 🎉</Text>
+        </Animated.View>
+      )}
+
+      {/* Konfeti */}
+      <ConfettiCannon
+        ref={confettiRef}
+        count={120}
+        origin={{ x: 200, y: 0 }}
+        autoStart={false}
+        fadeOut
+        colors={['#1a9e6e', '#ffd700', '#ff6b6b', '#4fc3f7', '#a5d6a7']}
+      />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  scrollContent: {
-    paddingBottom: 20,
-  },
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  scroll: { paddingBottom: 40 },
   header: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 16,
+    paddingBottom: 12,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1a1a1a',
-    marginBottom: 4,
+  title: { fontSize: 22, fontWeight: '800', color: '#1a1a1a' },
+  subtitle: { fontSize: 13, color: '#888', marginTop: 2 },
+  pointsRow: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 4,
+    alignItems: 'flex-start',
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
+  pointsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    gap: 6,
   },
-  qrSection: {
-    paddingHorizontal: 16,
-    paddingVertical: 20,
-  },
-  qrCamera: {
-    height: 220,
+  pointsBadgeText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  qrSection: { paddingHorizontal: 20, paddingTop: 16 },
+  qrBox: {
+    height: 180,
     backgroundColor: '#000',
-    borderRadius: 12,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    position: 'relative',
     overflow: 'hidden',
+    position: 'relative',
   },
   corner: {
     position: 'absolute',
-    width: 30,
-    height: 30,
+    width: 28,
+    height: 28,
     borderColor: '#1a9e6e',
     borderWidth: 3,
   },
-  topLeft: {
-    top: 10,
-    left: 10,
-    borderRightWidth: 0,
-    borderBottomWidth: 0,
+  tl: { top: 12, left: 12, borderRightWidth: 0, borderBottomWidth: 0 },
+  tr: { top: 12, right: 12, borderLeftWidth: 0, borderBottomWidth: 0 },
+  bl: { bottom: 12, left: 12, borderRightWidth: 0, borderTopWidth: 0 },
+  br: { bottom: 12, right: 12, borderLeftWidth: 0, borderTopWidth: 0 },
+  qrTitle: { fontSize: 15, fontWeight: '700', color: '#1a9e6e', marginTop: 10 },
+  qrSub: { fontSize: 12, color: '#666', marginTop: 4 },
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginVertical: 18,
   },
-  topRight: {
-    top: 10,
-    right: 10,
-    borderLeftWidth: 0,
-    borderBottomWidth: 0,
-  },
-  bottomLeft: {
-    bottom: 10,
-    left: 10,
-    borderRightWidth: 0,
-    borderTopWidth: 0,
-  },
-  bottomRight: {
-    bottom: 10,
-    right: 10,
-    borderLeftWidth: 0,
-    borderTopWidth: 0,
-  },
-  qrText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1a9e6e',
-    marginTop: 12,
-  },
-  qrSubtext: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-  },
-  trashSelectionSection: {
-    paddingHorizontal: 16,
-    marginTop: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1a1a1a',
-    marginBottom: 12,
-  },
-  trashGrid: {
+  orLine: { flex: 1, height: 1, backgroundColor: '#e0e0e0' },
+  orText: { marginHorizontal: 12, fontSize: 12, color: '#aaa' },
+  grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    gap: 10,
   },
+  cardWrapper: { width: '30.5%' },
   trashCard: {
-    width: '48%',
-    marginBottom: 12,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  trashCardSelected: {},
-  trashCardGradient: {
-    paddingVertical: 16,
-    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 12,
     alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#f0f0f0',
+    overflow: 'hidden',
+    position: 'relative',
+    minHeight: 130,
+    justifyContent: 'center',
+  },
+  iconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   trashName: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#1a1a1a',
-    marginTop: 8,
+    marginBottom: 2,
   },
-  trashNameSelected: {
-    color: '#fff',
+  trashDesc: {
+    fontSize: 10,
+    color: '#aaa',
+    marginBottom: 8,
+    textAlign: 'center',
   },
-  trashPoints: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1a9e6e',
-    marginTop: 4,
+  pointsPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
   },
-  trashPointsSelected: {
-    color: '#fff',
+  pointsPillText: { fontSize: 11, fontWeight: '600' },
+  checkBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
   },
-  earnButtonGradient: {
-    marginHorizontal: 16,
-    marginTop: 24,
-    borderRadius: 12,
+  selectedInfo: {
+    marginHorizontal: 20,
+    marginTop: 14,
+    padding: 12,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  selectedInfoText: { fontSize: 13, color: '#333', flex: 1 },
+  earnWrapper: {
+    marginHorizontal: 20,
+    marginTop: 18,
+    borderRadius: 16,
     overflow: 'hidden',
   },
   earnButton: {
@@ -310,28 +430,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 8,
   },
   earnButtonText: {
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '800',
     color: '#fff',
-    marginLeft: 8,
+    letterSpacing: 0.3,
   },
-  infoSection: {
-    marginHorizontal: 16,
-    marginTop: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(26, 158, 110, 0.1)',
-    borderRadius: 8,
+  infoBanner: {
+    marginHorizontal: 20,
+    marginTop: 16,
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'rgba(26,158,110,0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 8,
   },
-  infoText: {
-    fontSize: 12,
+  infoText: { fontSize: 12, color: '#1a9e6e', fontWeight: '500', flex: 1 },
+  floatingPoints: {
+    position: 'absolute',
+    bottom: 120,
+    alignSelf: 'center',
+    zIndex: 999,
+  },
+  floatingPointsText: {
+    fontSize: 32,
+    fontWeight: '900',
     color: '#1a9e6e',
-    fontWeight: '500',
-    marginLeft: 8,
-    flex: 1,
+    textShadowColor: 'rgba(0,0,0,0.15)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
 });
