@@ -1,16 +1,21 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
-  StatusBar,
+  TouchableOpacity,
   SafeAreaView,
-  FlatList,
+  StatusBar,
+  ActivityIndicator,
+  Alert,
+  Animated,
 } from 'react-native';
+import MapView, { Marker, Circle, PROVIDER_DEFAULT } from 'react-native-maps';
+import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAppContext } from '../context/AppContext';
+import { supabase } from '../lib/supabase';
 import { PointBadge } from '../components/PointBadge';
 import { StationCard } from '../components/StationCard';
 
@@ -18,187 +23,409 @@ interface HomeScreenProps {
   navigation: any;
 }
 
-// Mock veri
-const MOCK_STATIONS = [
-  { id: '1', name: 'İstasyon A', distance: 120, bikeCount: 5 },
-  { id: '2', name: 'İstasyon B', distance: 340, bikeCount: 2 },
-  { id: '3', name: 'İstasyon C', distance: 500, bikeCount: 3 },
-];
+interface Station {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  bike_count: number;
+}
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const { points, userName } = useAppContext();
+  const [location, setLocation] = useState<Location.LocationObject | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [stations, setStations] = useState<Station[]>([]);
+  const [selectedStation, setSelectedStation] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const mapRef = useRef<MapView>(null);
+  const cardAnim = useRef(new Animated.Value(0)).current;
 
-  const handleStationPress = (station: typeof MOCK_STATIONS[0]) => {
-    navigation.navigate('BikeRental', { station });
+  useEffect(() => {
+    requestLocation();
+    fetchStations();
+  }, []);
+
+  const fetchStations = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('stations')
+        .select('id, name, latitude, longitude, bike_count')
+        .order('name', { ascending: true });
+
+      if (error) {
+        setError('İstasyonlar yüklenemedi');
+        console.error('Stations fetch error:', error);
+      } else if (data) {
+        setStations(data);
+      }
+    } catch (err) {
+      setError('Beklenmedik bir hata oluştu');
+      console.error('fetchStations error:', err);
+    }
   };
+
+  const requestLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Konum İzni',
+          'Yakındaki istasyonları görmek için konum iznine ihtiyacımız var.',
+          [{ text: 'Tamam' }]
+        );
+        setLoading(false);
+        return;
+      }
+
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      setLocation(loc);
+      setLoading(false);
+    } catch (error) {
+      setLoading(false);
+      setError('Konum alınamadı');
+      console.error('Location error:', error);
+      Alert.alert('Hata', 'Konum alınamadı.');
+    }
+  };
+
+  const handleStationPress = (station: Station) => {
+    setSelectedStation(station.id);
+
+    mapRef.current?.animateToRegion({
+      latitude: station.latitude,
+      longitude: station.longitude,
+      latitudeDelta: 0.005,
+      longitudeDelta: 0.005,
+    }, 600);
+
+    Animated.spring(cardAnim, {
+      toValue: 1,
+      tension: 60,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleRentPress = (station: Station) => {
+    const distance = location ? getDistance(station) : 0;
+    navigation.navigate('BikeRental', { station: { ...station, distance } });
+  };
+
+  const getDistance = (station: Station) => {
+    if (!location) return 0;
+    const R = 6371e3;
+    const lat1 = (location.coords.latitude * Math.PI) / 180;
+    const lat2 = (station.latitude * Math.PI) / 180;
+    const dLat = ((station.latitude - location.coords.latitude) * Math.PI) / 180;
+    const dLng = ((station.longitude - location.coords.longitude) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  };
+
+  const focusMyLocation = () => {
+    if (location) {
+      mapRef.current?.animateToRegion({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      }, 600);
+    } else {
+      requestLocation();
+    }
+  };
+
+  const selectedStationData = stations.find((s) => s.id === selectedStation);
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f5f5f5" />
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Text style={styles.greeting}>Merhaba!</Text>
-            <Text style={styles.userName}>{userName}</Text>
-          </View>
-          <PointBadge points={points} size="small" />
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.greeting}>Merhaba 👋</Text>
+          <Text style={styles.userName}>{userName}</Text>
         </View>
+        <PointBadge points={points} size="small" />
+      </View>
 
-        {/* Map Section */}
-        <View style={styles.mapSection}>
-          <View style={styles.mapPlaceholder}>
-            <View style={[styles.stationDot, { top: '30%', left: '20%' }]} />
-            <View style={[styles.stationDot, { top: '50%', left: '50%' }]} />
-            <View style={[styles.stationDot, { top: '70%', left: '70%' }]} />
-            <Text style={styles.mapText}>📍 Yakındaki İstasyonlar</Text>
-            <MaterialCommunityIcons name="map-outline" size={60} color="#ddd" />
+      {/* Harita */}
+      <View style={styles.mapContainer}>
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#1a9e6e" />
+            <Text style={styles.loadingText}>Konum alınıyor...</Text>
           </View>
-        </View>
-
-        {/* Nearby Stations Section */}
-        <View style={styles.stationsSection}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Yakın İstasyonlar</Text>
-            <MaterialCommunityIcons name="sync" size={20} color="#1a9e6e" />
+        ) : error ? (
+          <View style={styles.errorContainer}>
+            <MaterialCommunityIcons name="alert-circle" size={48} color="#ef5350" />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity onPress={() => { setLoading(true); requestLocation(); }} style={styles.retryButton}>
+              <Text style={styles.retryButtonText}>Yeniden Dene</Text>
+            </TouchableOpacity>
           </View>
-
-          <View style={styles.stationsList}>
-            {MOCK_STATIONS.map((station) => (
-              <StationCard
-                key={station.id}
-                name={station.name}
-                distance={station.distance}
-                bikeCount={station.bikeCount}
-                onPress={() => handleStationPress(station)}
+        ) : location ? (
+          <>
+            <MapView
+              ref={mapRef}
+              style={styles.map}
+              provider={PROVIDER_DEFAULT}
+              initialRegion={{
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                latitudeDelta: 0.015,
+                longitudeDelta: 0.015,
+              }}
+              showsUserLocation
+              showsMyLocationButton={false}
+              showsCompass={false}
+            >
+              {/* Kullanıcı çevresi */}
+              <Circle
+                center={{
+                  latitude: location.coords.latitude,
+                  longitude: location.coords.longitude,
+                }}
+                radius={400}
+                fillColor="rgba(26, 158, 110, 0.08)"
+                strokeColor="rgba(26, 158, 110, 0.3)"
+                strokeWidth={1}
               />
-            ))}
-          </View>
-        </View>
 
-        {/* Quick Stats */}
-        <View style={styles.quickStats}>
-          <LinearGradient
-            colors={['rgba(26, 158, 110, 0.1)', 'rgba(26, 158, 110, 0.05)']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.statCard}
-          >
-            <MaterialCommunityIcons name="leaf" size={28} color="#1a9e6e" />
-            <Text style={styles.statLabel}>Çevre Dostu Hareket</Text>
-          </LinearGradient>
-          <LinearGradient
-            colors={['rgba(26, 158, 110, 0.1)', 'rgba(26, 158, 110, 0.05)']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.statCard}
-          >
-            <MaterialCommunityIcons name="bike" size={28} color="#1a9e6e" />
-            <Text style={styles.statLabel}>Karbonu Azalt</Text>
-          </LinearGradient>
+              {/* İstasyon pinleri */}
+              {stations.map((station) => (
+                <Marker
+                  key={station.id}
+                  coordinate={{
+                    latitude: station.latitude,
+                    longitude: station.longitude,
+                  }}
+                  onPress={() => handleStationPress(station)}
+                >
+                  <View style={[
+                    styles.markerContainer,
+                    selectedStation === station.id && styles.markerSelected,
+                  ]}>
+                    <MaterialCommunityIcons
+                      name="bike"
+                      size={18}
+                      color={selectedStation === station.id ? '#fff' : '#1a9e6e'}
+                    />
+                    <Text style={[
+                      styles.markerText,
+                      selectedStation === station.id && styles.markerTextSelected,
+                    ]}>
+                      {station.bike_count}
+                    </Text>
+                  </View>
+                </Marker>
+              ))}
+            </MapView>
+
+            {/* Konumuma dön butonu */}
+            <TouchableOpacity style={styles.locationButton} onPress={focusMyLocation}>
+              <MaterialCommunityIcons name="crosshairs-gps" size={22} color="#1a9e6e" />
+            </TouchableOpacity>
+
+            {/* Seçili istasyon kartı */}
+            {selectedStation && selectedStationData && (
+              <Animated.View
+                style={[
+                  styles.selectedCard,
+                  {
+                    transform: [{
+                      translateY: cardAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [100, 0],
+                      }),
+                    }],
+                    opacity: cardAnim,
+                  },
+                ]}
+              >
+                <View style={styles.selectedCardContent}>
+                  <View>
+                    <Text style={styles.selectedCardTitle}>{selectedStationData.name}</Text>
+                    <Text style={styles.selectedCardSub}>
+                      {selectedStationData.bike_count} bisiklet müsait · {getDistance(selectedStationData)}m uzakta
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => handleRentPress(selectedStationData)}
+                    activeOpacity={0.85}
+                  >
+                    <LinearGradient
+                      colors={['#1a9e6e', '#0d7a53']}
+                      style={styles.rentButton}
+                    >
+                      <Text style={styles.rentButtonText}>Kirala</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
+            )}
+          </>
+        ) : (
+          <View style={styles.noLocationContainer}>
+            <MaterialCommunityIcons name="map-marker-off" size={60} color="#ccc" />
+            <Text style={styles.noLocationText}>Konum alınamadı</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={requestLocation}>
+              <Text style={styles.retryButtonText}>Tekrar Dene</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {/* İstasyon listesi */}
+      {!loading && location && (
+        <View style={styles.stationsList}>
+          <Text style={styles.stationsTitle}>Yakın İstasyonlar</Text>
+          {stations.map((station) => (
+            <StationCard
+              key={station.id}
+              name={station.name}
+              distance={getDistance(station)}
+              bikeCount={station.bike_count}
+              onPress={() => handleStationPress(station)}
+            />
+          ))}
         </View>
-      </ScrollView>
+      )}
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  scrollContent: {
-    paddingBottom: 20,
-  },
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 20,
+    paddingVertical: 12,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  headerLeft: {
+  greeting: { fontSize: 13, color: '#888', marginBottom: 2 },
+  userName: { fontSize: 18, fontWeight: '700', color: '#1a1a1a' },
+  mapContainer: {
+    height: 300,
+    backgroundColor: '#e8f0ee',
+    overflow: 'hidden',
+  },
+  map: { flex: 1 },
+  loadingContainer: {
     flex: 1,
-  },
-  greeting: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  userName: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1a1a1a',
-  },
-  mapSection: {
-    paddingHorizontal: 16,
-    paddingVertical: 20,
-  },
-  mapPlaceholder: {
-    height: 200,
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
   },
-  stationDot: {
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorText: { fontSize: 16, color: '#ef5350', marginTop: 12 },
+  loadingText: { marginTop: 12, color: '#666', fontSize: 14 },
+  noLocationContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  noLocationText: { fontSize: 16, color: '#aaa', marginTop: 12 },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    backgroundColor: '#1a9e6e',
+    borderRadius: 20,
+  },
+  retryButtonText: { color: '#fff', fontWeight: '600' },
+  locationButton: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    bottom: 16,
+    right: 16,
+    backgroundColor: '#fff',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  markerContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#1a9e6e',
+    gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  markerSelected: {
     backgroundColor: '#1a9e6e',
   },
-  mapText: {
+  markerText: {
     fontSize: 12,
+    fontWeight: '700',
     color: '#1a9e6e',
-    fontWeight: '600',
-    marginBottom: 10,
-    zIndex: 1,
   },
-  stationsSection: {
-    marginTop: 20,
+  markerTextSelected: { color: '#fff' },
+  selectedCard: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
   },
-  sectionHeader: {
+  selectedCardContent: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    marginBottom: 12,
+    padding: 16,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1a1a1a',
-  },
-  stationsList: {
-    marginBottom: 20,
-  },
-  quickStats: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    height: 100,
+  selectedCardTitle: { fontSize: 16, fontWeight: '700', color: '#1a1a1a' },
+  selectedCardSub: { fontSize: 13, color: '#888', marginTop: 4 },
+  rentButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 16,
   },
-  statLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1a9e6e',
-    marginTop: 8,
-    textAlign: 'center',
+  rentButtonText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  stationsList: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  stationsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginBottom: 10,
   },
 });

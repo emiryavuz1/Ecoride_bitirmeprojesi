@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { ActivityIndicator, View } from 'react-native';
 
 import { LoginScreen } from '../screens/LoginScreen';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -10,6 +11,7 @@ import { TrashScreen } from '../screens/TrashScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { BikeRentalScreen } from '../screens/BikeRentalScreen';
 import { useAppContext } from '../context/AppContext';
+import { supabase } from '../lib/supabase';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -88,7 +90,36 @@ const TabNavigator = () => {
 };
 
 export const AppNavigator = () => {
-  const { isLoggedIn } = useAppContext();
+  const { isLoggedIn, setSession } = useAppContext();
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+      setIsLoading(false);
+    };
+
+    checkSession();
+
+    // Auth state değişikliklerini dinle
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setSession(session);
+      setIsLoading(false);
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#1a9e6e" />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer>

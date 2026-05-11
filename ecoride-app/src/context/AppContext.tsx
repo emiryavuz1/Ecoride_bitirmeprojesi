@@ -1,4 +1,6 @@
-import React, { createContext, useState, useCallback, ReactNode } from 'react';
+import React, { createContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import { Session } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabase';
 
 export interface HistoryItem {
   type: string;
@@ -15,7 +17,11 @@ export interface AppContextType {
   spendPoints: (amount: number, label: string) => boolean;
   isLoggedIn: boolean;
   userName: string;
+  userEmail: string;
+  session: Session | null;
   setIsLoggedIn: (loggedIn: boolean, name?: string) => void;
+  setSession: (session: Session | null) => void;
+  refreshProfile: () => Promise<void>;
 }
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -43,6 +49,42 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   ]);
   const [isLoggedIn, setIsLoggedInState] = useState(false);
   const [userName, setUserName] = useState('Ali Yılmaz');
+  const [userEmail, setUserEmail] = useState('');
+  const [session, setSessionState] = useState<Session | null>(null);
+
+  // Session kontrolü: başlangıçta mevcut oturumu kontrol et
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        setSessionState(data.session);
+        setIsLoggedInState(true);
+        setUserEmail(data.session.user.email || '');
+        setUserName(data.session.user.email?.split('@')[0] || 'Kullanıcı');
+      }
+    };
+    
+    checkSession();
+
+    // Auth state değişikliklerini dinle
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        setSessionState(session);
+        setIsLoggedInState(true);
+        setUserEmail(session.user.email || '');
+        setUserName(session.user.email?.split('@')[0] || 'Kullanıcı');
+      } else {
+        setSessionState(null);
+        setIsLoggedInState(false);
+        setUserEmail('');
+        setUserName('Ali Yılmaz');
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   const addPoints = useCallback((amount: number, label: string) => {
     setPoints((prev) => prev + amount);
@@ -82,6 +124,68 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     }
   }, []);
 
+  const setSession = useCallback((newSession: Session | null) => {
+    setSessionState(newSession);
+    if (!newSession) {
+      // Oturum kapandı - state'i sıfırla
+      setIsLoggedInState(false);
+      setUserEmail('');
+      setUserName('Ali Yılmaz');
+      setPoints(150);
+      setTrashCount(12);
+      setHistory([]);
+    }
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Kullanıcının profil bilgisini çek
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('points, trash_count')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError) {
+        console.error('Profil veri çekme hatası:', profileError);
+        return;
+      }
+
+      if (profileData) {
+        setPoints(profileData.points || 0);
+        setTrashCount(profileData.trash_count || 0);
+      }
+
+      // Son aktiviteleri çek
+      const { data: historyData, error: historyError } = await supabase
+        .from('point_transactions')
+        .select('id, type, amount, created_at, label')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (historyError) {
+        console.error('Aktivite veri çekme hatası:', historyError);
+        return;
+      }
+
+      if (historyData) {
+        const mappedHistory = historyData.map((item: any) => ({
+          type: item.type === 'earned' ? 'earned' : 'spent',
+          amount: item.amount,
+          date: new Date(item.created_at).toLocaleDateString('tr-TR'),
+          label: item.label || 'İşlem',
+        }));
+        setHistory(mappedHistory);
+      }
+    } catch (err) {
+      console.error('refreshProfile hatası:', err);
+    }
+  }, []);
+
   const value: AppContextType = {
     points,
     trashCount,
@@ -90,7 +194,11 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     spendPoints,
     isLoggedIn,
     userName,
+    userEmail,
+    session,
     setIsLoggedIn,
+    setSession,
+    refreshProfile,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

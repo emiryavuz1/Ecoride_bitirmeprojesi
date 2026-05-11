@@ -14,6 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { useAppContext } from '../context/AppContext';
+import { supabase } from '../lib/supabase';
 
 interface TrashScreenProps {
   navigation: any;
@@ -80,7 +81,7 @@ const TRASH_TYPES: TrashType[] = [
 ];
 
 export const TrashScreen: React.FC<TrashScreenProps> = () => {
-  const { addPoints, points } = useAppContext();
+  const { addPoints, points, refreshProfile } = useAppContext();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastEarned, setLastEarned] = useState<number | null>(null);
@@ -99,7 +100,7 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
     ]).start();
   };
 
-  const handleEarnPoints = () => {
+  const handleEarnPoints = async () => {
     if (!selectedId) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       Alert.alert('Uyarı', 'Lütfen bir çöp türü seçin');
@@ -112,24 +113,63 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
     setIsLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
-    setTimeout(() => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (user) {
+        // Çöp logunu kaydet
+        await supabase.from('trash_logs').insert({
+          user_id: user.id,
+          trash_type: selected.id,
+          points_earned: selected.points,
+        });
+
+        // Puan işlemini kaydet
+        await supabase.from('point_transactions').insert({
+          user_id: user.id,
+          type: 'earned',
+          amount: selected.points,
+          label: `Çöp atma (${selected.name})`,
+        });
+
+        // Profili güncelle
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('points, trash_count')
+          .eq('id', user.id)
+          .single();
+
+        if (profile) {
+          await supabase
+            .from('profiles')
+            .update({
+              points: profile.points + selected.points,
+              trash_count: profile.trash_count + 1,
+            })
+            .eq('id', user.id);
+        }
+      }
+
+      // Local state güncelle
       addPoints(selected.points, `Çöp atma (${selected.name})`);
       setLastEarned(selected.points);
       setIsLoading(false);
       setSelectedId(null);
 
-      // Konfeti
       confettiRef.current?.start();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // +puan animasyonu
       pointsAnim.setValue(0);
       pointsOpacity.setValue(1);
       Animated.parallel([
         Animated.timing(pointsAnim, { toValue: -60, duration: 1000, useNativeDriver: true }),
         Animated.timing(pointsOpacity, { toValue: 0, duration: 1000, useNativeDriver: true }),
       ]).start(() => setLastEarned(null));
-    }, 800);
+
+    } catch (err) {
+      setIsLoading(false);
+      Alert.alert('Hata', 'Puan eklenirken bir sorun oluştu');
+    }
   };
 
   const selectedTrash = TRASH_TYPES.find((t) => t.id === selectedId);
