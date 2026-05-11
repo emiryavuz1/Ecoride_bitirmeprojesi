@@ -8,10 +8,12 @@ import {
   ScrollView,
   Alert,
   Animated,
+  Modal,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { useAppContext } from '../context/AppContext';
 import { supabase } from '../lib/supabase';
@@ -30,61 +32,38 @@ interface TrashType {
 }
 
 const TRASH_TYPES: TrashType[] = [
-  {
-    id: 'plastic',
-    name: 'Plastik',
-    points: 10,
-    icon: 'bottle-soda',
-    color: '#2196F3',
-    description: 'Şişe, ambalaj',
-  },
-  {
-    id: 'glass',
-    name: 'Cam',
-    points: 15,
-    icon: 'glass-fragile',
-    color: '#9C27B0',
-    description: 'Şişe, kavanoz',
-  },
-  {
-    id: 'paper',
-    name: 'Kağıt',
-    points: 8,
-    icon: 'newspaper-variant',
-    color: '#FF9800',
-    description: 'Gazete, karton',
-  },
-  {
-    id: 'organic',
-    name: 'Organik',
-    points: 12,
-    icon: 'leaf',
-    color: '#4CAF50',
-    description: 'Yiyecek atığı',
-  },
-  {
-    id: 'metal',
-    name: 'Metal',
-    points: 20,
-    icon: 'silverware-fork-knife',
-    color: '#607D8B',
-    description: 'Teneke, kutu',
-  },
-  {
-    id: 'other',
-    name: 'Diğer',
-    points: 5,
-    icon: 'trash-can-outline',
-    color: '#795548',
-    description: 'Diğer atıklar',
-  },
+  { id: 'plastic', name: 'Plastik', points: 10, icon: 'bottle-soda', color: '#2196F3', description: 'Şişe, ambalaj' },
+  { id: 'glass', name: 'Cam', points: 15, icon: 'glass-fragile', color: '#9C27B0', description: 'Şişe, kavanoz' },
+  { id: 'paper', name: 'Kağıt', points: 8, icon: 'newspaper-variant', color: '#FF9800', description: 'Gazete, karton' },
+  { id: 'organic', name: 'Organik', points: 12, icon: 'leaf', color: '#4CAF50', description: 'Yiyecek atığı' },
+  { id: 'metal', name: 'Metal', points: 20, icon: 'pipe', color: '#607D8B', description: 'Teneke, kutu' },
+  { id: 'other', name: 'Diğer', points: 5, icon: 'trash-can-outline', color: '#795548', description: 'Diğer atıklar' },
 ];
 
+// Sunum için QR kodlarının karşılıkları
+const QR_TRASH_MAP: { [key: string]: string } = {
+  'ecoride_plastic': 'plastic',
+  'ecoride_glass': 'glass',
+  'ecoride_paper': 'paper',
+  'ecoride_organic': 'organic',
+  'ecoride_metal': 'metal',
+  'ecoride_other': 'other',
+  'plastic': 'plastic',
+  'glass': 'glass',
+  'paper': 'paper',
+  'organic': 'organic',
+  'metal': 'metal',
+  'other': 'other',
+};
+
 export const TrashScreen: React.FC<TrashScreenProps> = () => {
-  const { addPoints, points, refreshProfile } = useAppContext();
+  const { addPoints, points } = useAppContext();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastEarned, setLastEarned] = useState<number | null>(null);
+  const [cameraVisible, setCameraVisible] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
   const confettiRef = useRef<any>(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const pointsAnim = useRef(new Animated.Value(0)).current;
@@ -93,11 +72,58 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
   const handleSelect = (id: string) => {
     setSelectedId(id);
     Haptics.selectionAsync();
-
     Animated.sequence([
       Animated.timing(scaleAnim, { toValue: 0.95, duration: 80, useNativeDriver: true }),
       Animated.spring(scaleAnim, { toValue: 1, tension: 200, friction: 5, useNativeDriver: true }),
     ]).start();
+  };
+
+  const handleOpenCamera = async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) {
+        Alert.alert(
+          'Kamera İzni',
+          'QR kod okutmak için kamera iznine ihtiyacımız var.',
+          [{ text: 'Tamam' }]
+        );
+        return;
+      }
+    }
+    setScanned(false);
+    setCameraVisible(true);
+  };
+
+  const handleBarCodeScanned = ({ data }: { data: string }) => {
+    if (scanned) return;
+    setScanned(true);
+
+    const trashId = QR_TRASH_MAP[data.toLowerCase().trim()];
+
+    if (trashId) {
+      const trash = TRASH_TYPES.find((t) => t.id === trashId);
+      if (trash) {
+        setCameraVisible(false);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setSelectedId(trashId);
+        Alert.alert(
+          '✅ QR Kod Okundu!',
+          `${trash.name} çöpü tespit edildi!\n+${trash.points} puan kazanmak için "Puan Kazan" butonuna bas.`,
+          [{ text: 'Harika!' }]
+        );
+      }
+    } else {
+      setCameraVisible(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        '❌ Geçersiz QR Kod',
+        'Bu QR kod EcoRide sistemine ait değil.',
+        [
+          { text: 'Tekrar Dene', onPress: () => { setScanned(false); setCameraVisible(true); } },
+          { text: 'İptal' }
+        ]
+      );
+    }
   };
 
   const handleEarnPoints = async () => {
@@ -197,18 +223,22 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
           </LinearGradient>
         </View>
 
-        {/* QR Section */}
-        <View style={styles.qrSection}>
+        {/* QR Section — tıklanabilir */}
+        <TouchableOpacity style={styles.qrSection} onPress={handleOpenCamera} activeOpacity={0.85}>
           <View style={styles.qrBox}>
             <View style={[styles.corner, styles.tl]} />
             <View style={[styles.corner, styles.tr]} />
             <View style={[styles.corner, styles.bl]} />
             <View style={[styles.corner, styles.br]} />
-            <MaterialCommunityIcons name="qrcode-scan" size={64} color="rgba(26,158,110,0.25)" />
+            <MaterialCommunityIcons name="qrcode-scan" size={64} color="rgba(26,158,110,0.4)" />
             <Text style={styles.qrTitle}>QR Kodu Tara</Text>
-            <Text style={styles.qrSub}>Çöp kutusundaki kodu okutun</Text>
+            <Text style={styles.qrSub}>Çöp kutosundaki kodu okutun</Text>
+            <View style={styles.qrTapHint}>
+              <MaterialCommunityIcons name="camera" size={14} color="#1a9e6e" />
+              <Text style={styles.qrTapText}>Kamerayı açmak için dokun</Text>
+            </View>
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* Ayırıcı */}
         <View style={styles.orRow}>
@@ -334,6 +364,42 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
         fadeOut
         colors={['#1a9e6e', '#ffd700', '#ff6b6b', '#4fc3f7', '#a5d6a7']}
       />
+
+      {/* Kamera Modal */}
+      <Modal
+        visible={cameraVisible}
+        animationType="slide"
+        onRequestClose={() => setCameraVisible(false)}
+      >
+        <View style={styles.cameraContainer}>
+          <CameraView
+            style={styles.camera}
+            facing="back"
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+          />
+
+          {/* Kamera overlay */}
+          <View style={styles.cameraOverlay}>
+            <View style={styles.cameraHeader}>
+              <TouchableOpacity onPress={() => setCameraVisible(false)} style={styles.closeButton}>
+                <MaterialCommunityIcons name="close" size={28} color="#fff" />
+              </TouchableOpacity>
+              <Text style={styles.cameraTitle}>QR Kod Tara</Text>
+              <View style={{ width: 28 }} />
+            </View>
+
+            <View style={styles.scanArea}>
+              <View style={[styles.scanCorner, styles.scanTL]} />
+              <View style={[styles.scanCorner, styles.scanTR]} />
+              <View style={[styles.scanCorner, styles.scanBL]} />
+              <View style={[styles.scanCorner, styles.scanBR]} />
+            </View>
+
+            <Text style={styles.cameraHint}>Çöp kutosundaki QR kodu çerçeve içine alın</Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -389,6 +455,17 @@ const styles = StyleSheet.create({
   br: { bottom: 12, right: 12, borderLeftWidth: 0, borderTopWidth: 0 },
   qrTitle: { fontSize: 15, fontWeight: '700', color: '#1a9e6e', marginTop: 10 },
   qrSub: { fontSize: 12, color: '#666', marginTop: 4 },
+  qrTapHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    backgroundColor: 'rgba(26,158,110,0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+  },
+  qrTapText: { fontSize: 12, color: '#1a9e6e', fontWeight: '600' },
   orRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -504,4 +581,42 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
+  // Kamera stilleri
+  cameraContainer: { flex: 1, backgroundColor: '#000' },
+  camera: { flex: 1 },
+  cameraOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'space-between',
+    paddingBottom: 60,
+  },
+  cameraHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20,
+  },
+  closeButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cameraTitle: { fontSize: 18, fontWeight: '700', color: '#fff' },
+  scanArea: {
+    width: 250,
+    height: 250,
+    alignSelf: 'center',
+    position: 'relative',
+  },
+  scanCorner: { position: 'absolute', width: 40, height: 40, borderColor: '#1a9e6e', borderWidth: 4 },
+  scanTL: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 8 },
+  scanTR: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 8 },
+  scanBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 8 },
+  scanBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 8 },
+  cameraHint: { textAlign: 'center', color: '#fff', fontSize: 14, paddingHorizontal: 40, opacity: 0.8 },
 });
