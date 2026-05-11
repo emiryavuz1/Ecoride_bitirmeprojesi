@@ -65,6 +65,7 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
   const [scanned, setScanned] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const confettiRef = useRef<any>(null);
+  const scannedRef = useRef(false);
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const pointsAnim = useRef(new Animated.Value(0)).current;
   const pointsOpacity = useRef(new Animated.Value(0)).current;
@@ -91,39 +92,41 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
       }
     }
     setScanned(false);
+    scannedRef.current = false;
     setCameraVisible(true);
   };
 
   const handleBarCodeScanned = ({ data }: { data: string }) => {
-    if (scanned) return;
+    if (scannedRef.current) return;
+    scannedRef.current = true;
     setScanned(true);
+    setCameraVisible(false);
 
-    const trashId = QR_TRASH_MAP[data.toLowerCase().trim()];
-
-    if (trashId) {
-      const trash = TRASH_TYPES.find((t) => t.id === trashId);
-      if (trash) {
-        setCameraVisible(false);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setSelectedId(trashId);
+    setTimeout(() => {
+      const trashId = QR_TRASH_MAP[data.toLowerCase().trim()];
+      if (trashId) {
+        const trash = TRASH_TYPES.find((t) => t.id === trashId);
+        if (trash) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setSelectedId(trashId);
+          Alert.alert(
+            '✅ QR Kod Okundu!',
+            `${trash.name} çöpü tespit edildi!\n+${trash.points} puan kazanmak için "Puan Kazan" butonuna bas.`,
+            [{ text: 'Harika!' }]
+          );
+        }
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         Alert.alert(
-          '✅ QR Kod Okundu!',
-          `${trash.name} çöpü tespit edildi!\n+${trash.points} puan kazanmak için "Puan Kazan" butonuna bas.`,
-          [{ text: 'Harika!' }]
+          '❌ Geçersiz QR Kod',
+          'Bu QR kod EcoRide sistemine ait değil.',
+          [
+            { text: 'Tekrar Dene', onPress: () => { scannedRef.current = false; setScanned(false); setCameraVisible(true); } },
+            { text: 'İptal' }
+          ]
         );
       }
-    } else {
-      setCameraVisible(false);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      Alert.alert(
-        '❌ Geçersiz QR Kod',
-        'Bu QR kod EcoRide sistemine ait değil.',
-        [
-          { text: 'Tekrar Dene', onPress: () => { setScanned(false); setCameraVisible(true); } },
-          { text: 'İptal' }
-        ]
-      );
-    }
+    }, 300);
   };
 
   const handleEarnPoints = async () => {
