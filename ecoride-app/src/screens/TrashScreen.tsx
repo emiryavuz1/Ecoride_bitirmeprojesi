@@ -63,6 +63,7 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
   const [lastEarned, setLastEarned] = useState<number | null>(null);
   const [cameraVisible, setCameraVisible] = useState(false);
   const [scanned, setScanned] = useState(false);
+  const [qrPending, setQrPending] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const confettiRef = useRef<any>(null);
   const scannedRef = useRef(false);
@@ -71,6 +72,10 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
   const pointsOpacity = useRef(new Animated.Value(0)).current;
 
   const handleSelect = (id: string) => {
+    if (qrPending) {
+      Alert.alert('⚠️ QR Seçimi Aktif', 'QR ile seçim yapıldı, önce puan kazan!');
+      return;
+    }
     setSelectedId(id);
     Haptics.selectionAsync();
     Animated.sequence([
@@ -80,6 +85,14 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
   };
 
   const handleOpenCamera = async () => {
+    if (qrPending) {
+      Alert.alert(
+        '⚠️ Bekleyen İşlem',
+        'Önce mevcut çöpün için "Puan Kazan" butonuna basmalısın!',
+        [{ text: 'Tamam' }]
+      );
+      return;
+    }
     if (!permission?.granted) {
       const result = await requestPermission();
       if (!result.granted) {
@@ -109,6 +122,7 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
         if (trash) {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setSelectedId(trashId);
+          setQrPending(true);
           Alert.alert(
             '✅ QR Kod Okundu!',
             `${trash.name} çöpü tespit edildi!\n+${trash.points} puan kazanmak için "Puan Kazan" butonuna bas.`,
@@ -133,6 +147,16 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
     if (!selectedId) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       Alert.alert('Uyarı', 'Lütfen bir çöp türü seçin');
+      return;
+    }
+
+    if (!qrPending) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        '⚠️ QR Kod Gerekli',
+        'Puan kazanmak için önce çöp kutusundaki QR kodu taratman gerekiyor!',
+        [{ text: 'Tamam' }]
+      );
       return;
     }
 
@@ -184,6 +208,7 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
       setLastEarned(selected.points);
       setIsLoading(false);
       setSelectedId(null);
+      setQrPending(false);
 
       confettiRef.current?.start();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -227,7 +252,7 @@ export const TrashScreen: React.FC<TrashScreenProps> = () => {
         </View>
 
         {/* QR Section — tıklanabilir */}
-        <TouchableOpacity style={styles.qrSection} onPress={handleOpenCamera} activeOpacity={0.85}>
+        <TouchableOpacity style={[styles.qrSection, qrPending && { opacity: 0.5 }]} onPress={handleOpenCamera} activeOpacity={0.85}>
           <View style={styles.qrBox}>
             <View style={[styles.corner, styles.tl]} />
             <View style={[styles.corner, styles.tr]} />
